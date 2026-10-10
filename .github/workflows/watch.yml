@@ -1,8 +1,6 @@
 name: Apartment watcher
 
 on:
-  schedule:
-    - cron: "0 * * * *"   # every 10 min (GitHub may delay runs a bit)
   workflow_dispatch:          # adds a "Run workflow" button for manual runs
 
 permissions:
