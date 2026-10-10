@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
 Heilbronn student apartment watcher.
-​
+
 Checks these pages and alerts you when an apartment becomes available:
   - GEWO Studenten (APP one / APP two)  https://studenten.hn/freie-appartements
   - Böhringer Studentenapartments       https://www.boehringer.net/studentenapartments/
   - Campus Living Heilbronn             https://www.campus-living-heilbronn.de/mieten
   - Rosenberg Quartier                  https://rosenberg-quartier.de/apartments-wohnungen/student-apartments
   - W27 Apartments HN                   https://www.apartments-hn.de/apartment-mieten
-​
+
 Setup:   pip install requests beautifulsoup4
 Run:     python apartment_watcher.py            # check every 10 min, forever
          python apartment_watcher.py --once     # single check (for cron / Task Scheduler)
          python apartment_watcher.py --interval 300
-​
+
 Optional push notifications (env vars):
   NTFY_TOPIC=my-secret-topic        -> install the ntfy app and subscribe to that topic
   TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
@@ -23,33 +23,33 @@ import argparse, json, os, random, re, sys, time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin
-​
+
 import requests
 from bs4 import BeautifulSoup
-​
+
 STATE_FILE = Path(__file__).with_name("apartment_state.json")
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                          "(KHTML, like Gecko) Chrome/124 Safari/537.36",
            "Accept-Language": "de-DE,de;q=0.9,en;q=0.8"}
-​
-​
+
+
 class StructureChanged(Exception):
     """Raised when a page no longer looks like we expect (selectors broke)."""
-​
-​
+
+
 def get_soup(url):
     r = requests.get(url, headers=HEADERS, timeout=30)
     r.raise_for_status()
     return BeautifulSoup(r.text, "html.parser")
-​
-​
+
+
 def clean(text):
     return re.sub(r"\s+", " ", text).strip()
-​
-​
+
+
 # ---------------------------------------------------------------- site checks
 # Each returns a list of strings, one per available unit (empty list = nothing free).
-​
+
 def check_gewo():
     url = "https://studenten.hn/freie-appartements"
     soup = get_soup(url)
@@ -74,8 +74,8 @@ def check_gewo():
     if sections == 0:
         raise StructureChanged("no 'Freie Appartements' headings found")
     return found
-​
-​
+
+
 def check_boehringer():
     url = "https://www.boehringer.net/studentenapartments/"
     soup = get_soup(url)
@@ -88,8 +88,8 @@ def check_boehringer():
     items = [clean(x.get_text(" ")) for x in box.select("tr, li, .free_room, article")]
     items = [i for i in items if i] or [text[:300]]
     return items
-​
-​
+
+
 def check_campus_living():
     url = "https://www.campus-living-heilbronn.de/mieten"
     soup = get_soup(url)
@@ -110,8 +110,8 @@ def check_campus_living():
         name = a.get("title") or clean(a.get_text())
         free[name] = f"{name} – {status}"   # dict dedupes desktop+mobile duplicates
     return sorted(free.values())
-​
-​
+
+
 def check_rosenberg():
     url = "https://rosenberg-quartier.de/apartments-wohnungen/student-apartments"
     soup = get_soup(url)
@@ -128,9 +128,9 @@ def check_rosenberg():
             if cells:
                 found.append(f"{building}: " + " | ".join(cells))
     return found
-​
-​
-​
+
+
+
 def parse_w27(payload, today=None):
     """Match W27's Available / Soon available categories (under 6 calendar months)."""
     today = today or datetime.now()
@@ -163,8 +163,8 @@ def parse_w27(payload, today=None):
                      f"{a['area_living_space']} sqm | "
                      f"EUR {a['price_rental_price_flatrate']}/month | {status}")
     return sorted(set(found))
-​
-​
+
+
 def check_w27():
     """Find the site's public API integration so rotated asset names still work."""
     url = "https://www.apartments-hn.de/apartment-mieten"
@@ -199,7 +199,7 @@ def check_w27():
             response.raise_for_status()
             return parse_w27(response.json())
     raise StructureChanged("W27 public listing API integration changed")
-​
+
 SITES = {
     "W27 Apartments HN": ("https://www.apartments-hn.de/apartment-mieten", check_w27),
     "GEWO Studenten": ("https://studenten.hn/freie-appartements", check_gewo),
@@ -207,10 +207,10 @@ SITES = {
     "Campus Living": ("https://www.campus-living-heilbronn.de/mieten", check_campus_living),
     "Rosenberg Quartier": ("https://rosenberg-quartier.de/apartments-wohnungen/student-apartments", check_rosenberg),
 }
-​
-​
+
+
 # -------------------------------------------------------------- notifications
-​
+
 def notify(title, message, url=None):
     print(f"\n🔔 {title}\n{message}\n", flush=True)
     topic = os.getenv("NTFY_TOPIC")
@@ -235,17 +235,17 @@ def notify(title, message, url=None):
         os.system(f"""osascript -e 'display notification "{message[:200]}" with title "{title}"' >/dev/null 2>&1""")
     elif sys.platform.startswith("linux"):
         os.system(f'notify-send "{title}" "{message[:200]}" >/dev/null 2>&1')
-​
-​
+
+
 # ----------------------------------------------------------------------- main
-​
+
 def load_state():
     try:
         return json.loads(STATE_FILE.read_text("utf-8"))
     except Exception:
         return {}
-​
-​
+
+
 def run_once(state):
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for name, (url, fn) in SITES.items():
@@ -270,8 +270,8 @@ def run_once(state):
                    url)
         state[name] = listings
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), "utf-8")
-​
-​
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--once", action="store_true", help="check once and exit")
@@ -287,11 +287,10 @@ def main():
         if args.once:
             break
         time.sleep(args.interval + random.randint(0, 60))   # small jitter, be polite
-​
-​
+
+
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         print("\nStopped.")
-​
