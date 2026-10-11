@@ -17,10 +17,12 @@ Run:     python apartment_watcher.py            # check every 10 min, forever
 Optional push notifications (env vars):
   NTFY_TOPIC=my-secret-topic        -> install the ntfy app and subscribe to that topic
   TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
+W27_TIMEZONE=America/Los_Angeles -> match W27's browser-local availability rules
 You are only alerted about *new* listings (state is kept in apartment_state.json).
 """
 import argparse, json, os, random, re, sys, time
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -132,8 +134,23 @@ def check_rosenberg():
 
 
 def parse_w27(payload, today=None):
-    """Match W27's Available / Soon available categories (under 6 calendar months)."""
-    today = today or datetime.now()
+    """Match W27's browser-local date calculation, including JS UTC date parsing.
+
+    W27 parses YYYY-MM-DD as UTC midnight, then reads local year/month. On
+    browsers west of UTC, April 1 becomes March 31 internally. GitHub runs in
+    UTC, so using naive Python dates misses listings shown in those browsers.
+    W27_TIMEZONE defaults to this watcher's user's America/Los_Angeles zone.
+    """
+    try:
+        browser_tz = ZoneInfo(os.getenv("W27_TIMEZONE", "America/Los_Angeles"))
+    except ZoneInfoNotFoundError:
+        raise StructureChanged("Invalid W27_TIMEZONE; use an IANA time zone")
+    if today is None:
+        today = datetime.now(browser_tz)
+    elif today.tzinfo is None:
+        today = today.replace(tzinfo=browser_tz)
+    else:
+        today = today.astimezone(browser_tz)
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows:
         raise StructureChanged("W27 API returned no apartment rows; check manually")
@@ -149,11 +166,12 @@ def parse_w27(payload, today=None):
             status = "Available now"
         elif isinstance(begin, str):
             try:
-                rental_date = datetime.strptime(begin, "%Y-%m-%d")
+                rental_date = datetime.strptime(begin, "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc).astimezone(browser_tz)
             except ValueError:
                 raise StructureChanged("W27 rental date format changed")
             months = (today.year - rental_date.year) * 12 + today.month - rental_date.month
-            # This is the rule used by the site's apartment table, not its banner.
+            # Match JavaScript getFullYear/getMonth in the configured browser zone.
             if abs(months) >= 6:
                 continue
             status = f"Soon available from {begin}"
